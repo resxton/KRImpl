@@ -21,25 +21,23 @@ def hamming_decode_7bit(encoded: int) -> int:
     return (d1 << 0) | (d2 << 1) | (d3 << 2) | (d4 << 3)
 
 def read_frame(ser) -> bytes:
-    """Читает и декодирует кадр."""
+    """Читает два 7-битных кода и собирает байт."""
     data = []
-    while True:
+
+    while len(data) < 2:
         byte = ser.read(1)
         if not byte:
             return None
         
-        if byte == b'\xFF':  # Начало кадра
-            encoded = ser.read(1)[0]
+        if byte == b'\xFF':  # Старт кадра
+            encoded = ser.read(1)
             stop_byte = ser.read(1)
-            
-            if stop_byte == b'\xFE':
-                decoded = hamming_decode_7bit(encoded)
-                data.append(decoded)
-            else:
-                print("Ошибка: некорректный стоп-байт")
-        
-        if len(data) >= 2:  # Собрали полный байт
-            return bytes([(data[0] << 4) | data[1]])
+            if not encoded or stop_byte != b'\xFE':
+                continue  # Пропускаем ошибочные кадры
+            decoded = hamming_decode_7bit(encoded[0])
+            data.append(decoded)
+
+    return bytes([(data[0] << 4) | data[1]])
 
 def main():
     port = '/dev/ttys034'  # Ваш порт
