@@ -36,7 +36,7 @@ def main():
                 break
             
             print(f"Отправка: {message}")
-            send_frame(ser, message.encode('utf-8'))
+            send_frame(ser, (message + '\n').encode('utf-8'))
             
     finally:
         ser.close()

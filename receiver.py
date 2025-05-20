@@ -40,16 +40,23 @@ def read_frame(ser) -> bytes:
     return bytes([(data[0] << 4) | data[1]])
 
 def main():
-    port = '/dev/ttys034'  # Ваш порт
+    port = '/dev/ttys034'
     ser = serial.Serial(port, baudrate=9600, timeout=1)
     
+    buffer = bytearray()
+    print("Ожидание данных...")
+    
     try:
-        print("Ожидание данных...")
         while True:
-            frame = read_frame(ser)
-            if frame:
-                print(f"Принято: {frame.decode('utf-8', errors='replace')}")
-                
+            byte = read_frame(ser)
+            if byte:
+                buffer += byte
+                if byte == b'\n' or byte == b'\r':
+                    try:
+                        print("Принято:", buffer.decode('utf-8').strip())
+                    except UnicodeDecodeError:
+                        print("Ошибка декодирования:", buffer.hex())
+                    buffer.clear()
     except KeyboardInterrupt:
         print("\nЗавершение работы...")
     finally:
