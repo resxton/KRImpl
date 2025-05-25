@@ -3,6 +3,11 @@ import serial.tools.list_ports
 import time
 import os
 import glob
+from frame import Frame
+
+# Задание адресов вручную для примера
+MY_ADDR = 0x02
+RECV_ADDR = 0x01
 
 def hamming_encode_4bit(data: int) -> int:
     """Кодирует 4 бита в 7-битный код Хэмминга."""
@@ -74,9 +79,10 @@ def main():
             message = input("Введите сообщение (или 'exit'): ")
             if message.lower() == 'exit':
                 break
-            
-            print(f"Отправка: {message}")
-            send_frame(ser, (message + '\n').encode('utf-8'))
+
+            frame = Frame(receiver=RECV_ADDR, sender=MY_ADDR, frame_type=Frame.TYPE_I, data=message.encode('utf-8'))
+            send_frame(ser, frame.to_bytes())
+            print(f"Отправлено: {frame}")
     finally:
         ser.close()
 

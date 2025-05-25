@@ -3,8 +3,10 @@ import glob
 import serial
 import serial.tools.list_ports
 
+from frame import Frame
+
+
 def list_serial_ports():
-    """Возвращает список доступных COM-портов, включая виртуальные от socat."""
     ports = list(serial.tools.list_ports.comports())
     found = {p.device for p in ports}
     additional_ports = []
@@ -23,8 +25,8 @@ def list_serial_ports():
             print(f"{i}: {port.device} — {port.description}")
     return all_ports
 
+
 def hamming_decode_7bit(encoded: int) -> int:
-    """Декодирует 7-битный код Хэмминга в 4 бита данных."""
     p1 = (encoded >> 0) & 1
     p2 = (encoded >> 1) & 1
     d1 = (encoded >> 2) & 1
@@ -39,32 +41,31 @@ def hamming_decode_7bit(encoded: int) -> int:
     error_pos = s1 + (s2 << 1) + (s3 << 2)
 
     if error_pos:
-        encoded ^= (1 << (error_pos - 1))  # Исправляем ошибку
-
+        encoded ^= (1 << (error_pos - 1))
     return (d1 << 0) | (d2 << 1) | (d3 << 2) | (d4 << 3)
+
 
 def read_frame(ser) -> bytes:
     """Читает два 7-битных кода и собирает байт."""
     data = []
-
     while len(data) < 2:
         byte = ser.read(1)
         if not byte:
             return None
-
         if byte == b'\xFF':  # Старт кадра
             encoded = ser.read(1)
             stop_byte = ser.read(1)
             if not encoded or stop_byte != b'\xFE':
-                continue  # Пропускаем ошибочные кадры
+                continue
             decoded = hamming_decode_7bit(encoded[0])
             data.append(decoded)
-
     return bytes([(data[0] << 4) | data[1]])
 
-def main():
-    ports = list_serial_ports()
 
+def main():
+    MY_ADDR = int(input("Введите адрес текущего узла (например, 0x01): "), 16)
+
+    ports = list_serial_ports()
     use_manual = False
     if not ports:
         use_manual = True
@@ -82,25 +83,52 @@ def main():
         port = ports[index] if isinstance(ports[index], str) else ports[index].device
 
     ser = serial.Serial(port, baudrate=9600, timeout=1)
+    print(f"Ожидание данных на {port}...")
 
     buffer = bytearray()
-    print(f"Ожидание данных на {port}...")
+    in_frame = False
 
     try:
         while True:
             byte = read_frame(ser)
-            if byte:
-                buffer += byte
-                if byte == b'\n' or byte == b'\r':
+            if not byte:
+                continue
+
+            b = byte[0]
+
+            if b == 0xFF and not in_frame:
+                buffer = bytearray([b])
+                in_frame = True
+            elif in_frame:
+                buffer.append(b)
+                if b == 0xFF and len(buffer) >= 6:
                     try:
-                        print("Принято:", buffer.decode('utf-8').strip())
-                    except UnicodeDecodeError:
-                        print("Ошибка декодирования:", buffer.hex())
-                    buffer.clear()
+                        frame = Frame.from_bytes(buffer)
+
+                        if frame.receiver != MY_ADDR and frame.receiver != Frame.BROADCAST_ADDR:
+                            print(f"[Служебно] Кадр не для меня, адрес {frame.receiver:02X}")
+                        elif frame.frame_type == Frame.TYPE_I:
+                            text = frame.data.decode('utf-8', errors='replace').strip()
+                            print(f"[{frame.sender:02X} → {frame.receiver:02X}] Текст: {text}")
+                        elif frame.frame_type == Frame.TYPE_ACK:
+                            print(f"[{frame.sender:02X}] Принят ACK")
+                        elif frame.frame_type == Frame.TYPE_RET:
+                            print(f"[{frame.sender:02X}] Запрошен RET")
+                        elif frame.frame_type == Frame.TYPE_LINK:
+                            print(f"[{frame.sender:02X}] Установка соединения")
+                        elif frame.frame_type == Frame.TYPE_UPLINK:
+                            print(f"[{frame.sender:02X}] Разрыв соединения")
+                        else:
+                            print(f"[{frame.sender:02X}] Неизвестный тип кадра: {frame.frame_type:02X}")
+                    except Exception as e:
+                        print("Ошибка при разборе кадра:", e)
+                    in_frame = False
+
     except KeyboardInterrupt:
         print("\nЗавершение работы...")
     finally:
         ser.close()
+
 
 if __name__ == "__main__":
     main()
