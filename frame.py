@@ -40,7 +40,7 @@ class Frame:
         length = raw[4]
 
         if len(raw) != 6 + length:
-            raise ValueError("Длина кадра: {len(raw)}, ожидаемая: {6 + length}")
+            raise ValueError(f"Длина кадра: {len(raw)}, ожидаемая: {6 + length}")
 
         data = raw[5:-1]
         return Frame(receiver, sender, frame_type, data)

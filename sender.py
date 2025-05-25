@@ -5,12 +5,10 @@ import os
 import glob
 from frame import Frame
 
-# Задание адресов вручную для примера
 MY_ADDR = 0x02
 RECV_ADDR = 0x01
 
 def hamming_encode_4bit(data: int) -> int:
-    """Кодирует 4 бита в 7-битный код Хэмминга."""
     d1 = (data >> 0) & 1
     d2 = (data >> 1) & 1
     d3 = (data >> 2) & 1
@@ -21,20 +19,18 @@ def hamming_encode_4bit(data: int) -> int:
     return (p1 | (p2 << 1) | (d1 << 2) | (p3 << 3) | (d2 << 4) | (d3 << 5) | (d4 << 6))
 
 def send_frame(ser, data: bytes):
-    """Отправляет данные в формате кадра с кодированием Хэмминга."""
     for byte in data:
         upper_nibble = (byte >> 4) & 0x0F
         lower_nibble = byte & 0x0F
-        
+
         encoded_upper = hamming_encode_4bit(upper_nibble)
         encoded_lower = hamming_encode_4bit(lower_nibble)
-        
+
         ser.write(bytes([0xFF, encoded_upper, 0xFE]))
         ser.write(bytes([0xFF, encoded_lower, 0xFE]))
         time.sleep(0.01)
 
 def list_serial_ports():
-    """Возвращает список доступных COM-портов, включая виртуальные от socat."""
     ports = list(serial.tools.list_ports.comports())
     found = {p.device for p in ports}
     additional_ports = []
