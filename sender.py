@@ -77,6 +77,8 @@ def main():
             
             print(f"Отправка: {message}")
             send_frame(ser, (message + '\n').encode('utf-8'))
+    except KeyboardInterrupt:
+        print("\nЗавершение работы...")
     finally:
         ser.close()
 
