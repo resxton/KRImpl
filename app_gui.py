@@ -1,6 +1,5 @@
-
 import tkinter as tk
-from tkinter import scrolledtext, messagebox, Toplevel
+from tkinter import ttk, scrolledtext, messagebox
 import serial
 import serial.tools.list_ports
 import time
@@ -67,16 +66,46 @@ def send_ack(ser, receiver_addr, sender_addr):
     ack_frame = Frame(receiver=receiver_addr, sender=sender_addr, frame_type=Frame.TYPE_ACK)
     send_frame(ser, ack_frame.to_bytes())
 
-# === Базовое окно для Sender и Receiver ===
-class BaseSerialWindow:
-    def __init__(self, root, title, is_sender=True):
+# === Окно с вкладками Sender и Receiver ===
+class SerialAppTabs:
+    def __init__(self, root):
         self.root = root
-        self.window = Toplevel(root)
-        self.window.title(title)
-        self.window.geometry("600x400")
+        self.root.title("UART Приложение")
+        self.root.geometry("800x500")
+        self.root.resizable(True, True)
+
+        style = ttk.Style()
+        style.configure("TNotebook.Tab", font=("Helvetica", 12), padding=[10, 5])
+        style.configure("TButton", font=("Helvetica", 10), padding=6)
+        style.configure("TLabel", font=("Helvetica", 10))
+        style.configure("Header.TLabel", font=("Helvetica", 12, "bold"))
+
+        # Notebook для вкладок
+        self.notebook = ttk.Notebook(root)
+        self.notebook.pack(pady=10, expand=True, fill='both')
+
+        # Создаем вкладки
+        self.sender_tab = ttk.Frame(self.notebook)
+        self.receiver_tab = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.sender_tab, text="Отправитель")
+        self.notebook.add(self.receiver_tab, text="Получатель")
+
+        # Собираем интерфейсы
+        self.sender = BaseSerialPanel(self.sender_tab, is_sender=True)
+        self.receiver = BaseSerialPanel(self.receiver_tab, is_sender=False)
+
+    def close(self):
+        self.sender.close()
+        self.receiver.close()
+
+
+# === Панель подключения (общая для Sender и Receiver) ===
+class BaseSerialPanel:
+    def __init__(self, parent, is_sender=True):
+        self.parent = parent
         self.is_sender = is_sender
 
-        # Переменные
         self.ser = None
         self.running = False
         self.my_addr = 0x01
@@ -84,39 +113,45 @@ class BaseSerialWindow:
 
         # UI
         self.create_widgets()
-        self.refresh_ports()
 
     def create_widgets(self):
-        # Порт
-        tk.Label(self.window, text="Выберите порт:").grid(row=0, column=0, sticky='w', padx=10, pady=5)
-        self.port_var = tk.StringVar()
-        self.port_menu = tk.OptionMenu(self.window, self.port_var, [])
-        self.port_menu.grid(row=0, column=1, sticky='ew', padx=10)
+        grid_opts = {'padx': 10, 'pady': 5, 'sticky': 'ew'}
 
-        self.refresh_btn = tk.Button(self.window, text="Обновить порты", command=self.refresh_ports)
-        self.refresh_btn.grid(row=0, column=2, padx=5)
+        # Выбор порта
+        ttk.Label(self.parent, text="Выберите порт:", style="Header.TLabel").grid(row=0, column=0, **grid_opts)
+        self.port_var = tk.StringVar()
+        self.port_menu = ttk.OptionMenu(self.parent, self.port_var, [])
+        self.port_menu.grid(row=0, column=1, **grid_opts)
+        self.refresh_btn = ttk.Button(self.parent, text="Обновить порты", command=self.refresh_ports)
+        self.refresh_btn.grid(row=0, column=2, **grid_opts)
 
         # Адрес узла
-        tk.Label(self.window, text="Адрес узла (hex):").grid(row=1, column=0, sticky='w', padx=10, pady=5)
-        self.addr_entry = tk.Entry(self.window)
+        ttk.Label(self.parent, text="Адрес узла (hex):", style="Header.TLabel").grid(row=1, column=0, **grid_opts)
+        self.addr_entry = ttk.Entry(self.parent)
         self.addr_entry.insert(0, "01")
-        self.addr_entry.grid(row=1, column=1, sticky='ew', padx=10)
+        self.addr_entry.grid(row=1, column=1, **grid_opts)
+        self.connect_btn = ttk.Button(self.parent, text="Установить соединение", command=self.start_serial)
+        self.connect_btn.grid(row=1, column=2, **grid_opts)
 
-        # Запуск
-        self.start_btn = tk.Button(self.window, text="Запустить", command=self.start_serial)
-        self.start_btn.grid(row=1, column=2, padx=5)
-
-        # Сообщение (только для отправителя)
+        # Поле сообщения (только для отправителя)
         if self.is_sender:
-            tk.Label(self.window, text="Сообщение:").grid(row=2, column=0, sticky='w', padx=10, pady=5)
-            self.msg_entry = tk.Entry(self.window)
-            self.msg_entry.grid(row=2, column=1, sticky='ew', padx=10)
-            self.send_btn = tk.Button(self.window, text="Отправить", command=self.send_message)
-            self.send_btn.grid(row=2, column=2, padx=5)
+            ttk.Label(self.parent, text="Сообщение:", style="Header.TLabel").grid(row=2, column=0, **grid_opts)
+            self.msg_entry = ttk.Entry(self.parent)
+            self.msg_entry.grid(row=2, column=1, **grid_opts)
+            self.send_btn = ttk.Button(self.parent, text="Отправить", command=self.send_message)
+            self.send_btn.grid(row=2, column=2, **grid_opts)
 
         # Лог
-        self.log_text = scrolledtext.ScrolledText(self.window, height=15, wrap=tk.WORD, state='disabled')
-        self.log_text.grid(row=3, column=0, columnspan=3, padx=10, pady=10, sticky='nsew')
+        self.log_text = scrolledtext.ScrolledText(self.parent, height=15, wrap=tk.WORD, state='disabled')
+        self.log_text.grid(row=3 if self.is_sender else 2, column=0, columnspan=3, padx=10, pady=10, sticky='nsew')
+
+        # Расширение по сетке
+        for i in range(4):
+            self.parent.grid_rowconfigure(i, weight=1)
+        for i in range(3):
+            self.parent.grid_columnconfigure(i, weight=1)
+
+        self.refresh_ports()
 
     def refresh_ports(self):
         ports = list(serial.tools.list_ports.comports())
@@ -235,32 +270,10 @@ class BaseSerialWindow:
         self.running = False
         if self.ser and self.ser.is_open:
             self.ser.close()
-        self.window.destroy()
 
 
-# === Основное окно с кнопками ===
-class AppLauncher:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("UART Приложение")
-        self.root.geometry("300x200")
-
-        tk.Label(root, text="Выберите режим:", font=("Arial", 14)).pack(pady=20)
-
-        self.btn_receiver = tk.Button(root, text="Запустить Получатель", width=20, command=self.open_receiver)
-        self.btn_receiver.pack(pady=10)
-
-        self.btn_sender = tk.Button(root, text="Запустить Отправитель", width=20, command=self.open_sender)
-        self.btn_sender.pack(pady=10)
-
-    def open_receiver(self):
-        BaseSerialWindow(self.root, "Получатель", is_sender=False)
-
-    def open_sender(self):
-        BaseSerialWindow(self.root, "Отправитель", is_sender=True)
-
-
+# === Запуск приложения ===
 if __name__ == "__main__":
     root = tk.Tk()
-    AppLauncher(root)
+    app = SerialAppTabs(root)
     root.mainloop()
