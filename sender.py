@@ -1,5 +1,4 @@
 import serial
-import serial.tools.list_ports
 import time
 import os
 import glob
@@ -50,24 +49,7 @@ def list_serial_ports():
     return all_ports
 
 def main():
-    ports = list_serial_ports()
-
-    use_manual = False
-    if not ports:
-        use_manual = True
-    else:
-        answer = input("Вы хотите выбрать порт из списка? (y/n): ").lower()
-        use_manual = answer == 'n'
-
-    if use_manual:
-        port = input("Введите путь к порту вручную (например, /dev/ttys034): ")
-    else:
-        index = int(input("Выберите порт по номеру: "))
-        if index < 0 or index >= len(ports):
-            print("Неверный выбор порта.")
-            return
-        port = ports[index] if isinstance(ports[index], str) else ports[index].device
-
+    port = '/dev/ttys033'  # Ваш порт
     ser = serial.Serial(port, baudrate=9600, timeout=1)
     
     try:

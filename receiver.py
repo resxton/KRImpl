@@ -1,5 +1,3 @@
-import os
-import glob
 import serial
 import serial.tools.list_ports
 import time
@@ -32,12 +30,12 @@ def hamming_decode_7bit(encoded: int) -> int:
     d2 = (encoded >> 4) & 1
     d3 = (encoded >> 5) & 1
     d4 = (encoded >> 6) & 1
-
+    
     s1 = p1 ^ d1 ^ d2 ^ d4
     s2 = p2 ^ d1 ^ d3 ^ d4
     s3 = p3 ^ d2 ^ d3 ^ d4
     error_pos = s1 + (s2 << 1) + (s3 << 2)
-
+    
     if error_pos:
         encoded ^= (1 << (error_pos - 1))
     return (d1 << 0) | (d2 << 1) | (d3 << 2) | (d4 << 3)
@@ -111,6 +109,7 @@ def main():
     in_frame = False
 
     try:
+        print("Ожидание данных...")
         while True:
             byte = read_frame(ser)
             if not byte:
