@@ -5,8 +5,10 @@ import os
 import glob
 import sys
 import locale
-from hamming import encode_4bit
+from hamming import encode_4bit, decode_7bit
 from frame import Frame
+from connection import Connection, ConnectionState
+import select
 
 MY_ADDR = 0x02  # Адрес отправителя
 RECV_ADDR = 0x01  # Адрес получателя
@@ -42,22 +44,47 @@ def encode_and_send_byte(ser, byte: int):
     ser.write(bytes([0xFF, encoded_lower, 0xFF]))
     time.sleep(0.01)
 
-def send_frame(ser, message: str):
-    """Создает и отправляет информационный фрейм."""
-    # Создаем фрейм
-    frame = Frame(
-        receiver=RECV_ADDR,
-        sender=MY_ADDR,
-        frame_type=Frame.TYPE_I,
-        data=message.encode('utf-8')
-    )
-    
-    # Преобразуем фрейм в байты
-    frame_bytes = frame.to_bytes()
-    
-    # Отправляем каждый байт фрейма
-    for byte in frame_bytes:
+def send_frame(ser, frame: Frame):
+    """Отправляет фрейм."""
+    for byte in frame.to_bytes():
         encode_and_send_byte(ser, byte)
+
+def read_byte(ser) -> int:
+    """Читает два 7-битных кода и собирает байт."""
+    data = []
+    while len(data) < 2:
+        byte = ser.read(1)
+        if not byte:
+            return None
+        if byte == b'\xFF':  # Старт кадра
+            encoded = ser.read(1)
+            stop_byte = ser.read(1)
+            if not encoded or stop_byte != b'\xFF':
+                continue  # Пропускаем ошибочные кадры
+            decoded = decode_7bit(encoded[0])
+            data.append(decoded)
+    return (data[0] << 4) | data[1]
+
+def read_frame(ser) -> Frame:
+    """Читает и собирает фрейм."""
+    buffer = bytearray()
+    while True:
+        byte = read_byte(ser)
+        if byte is None:
+            return None
+        
+        buffer.append(byte)
+        
+        # Проверяем, достаточно ли байт для заголовка фрейма
+        if len(buffer) >= 5:
+            try:
+                # Проверяем длину данных из заголовка
+                length = buffer[4]
+                if len(buffer) >= length + 6:  # заголовок + данные + стоп-байт
+                    return Frame.from_bytes(buffer)
+            except Exception as e:
+                print(f"Ошибка при разборе фрейма: {e}")
+                buffer.clear()
 
 def list_serial_ports():
     """Возвращает список доступных COM-портов, включая виртуальные от socat."""
@@ -78,6 +105,58 @@ def list_serial_ports():
         else:
             print(f"{i}: {port.device} — {port.description}")
     return all_ports
+
+def get_status_prompt(connection: Connection) -> str:
+    """Возвращает красиво отформатированный статус для промпта."""
+    state = connection.state
+    if state == ConnectionState.CONNECTED:
+        return f"\033[32m[CONNECTED to 0x{connection.remote_addr:02X}]\033[0m"
+    elif state == ConnectionState.CONNECTING:
+        return f"\033[33m[CONNECTING to 0x{connection.remote_addr:02X}...]\033[0m"
+    elif state == ConnectionState.DISCONNECTING:
+        return f"\033[33m[DISCONNECTING from 0x{connection.remote_addr:02X}...]\033[0m"
+    else:
+        return "\033[31m[DISCONNECTED]\033[0m"
+
+def print_status_message(message: str, status: str = "info"):
+    """Выводит статусное сообщение в соответствующем цвете."""
+    colors = {
+        "error": "\033[31m",  # красный
+        "success": "\033[32m", # зеленый
+        "info": "\033[36m",    # голубой
+        "warning": "\033[33m"  # желтый
+    }
+    color = colors.get(status, colors["info"])
+    print(f"{color}{message}\033[0m")
+
+def print_help():
+    """Выводит справку по командам."""
+    print("\n\033[1mДоступные команды:\033[0m")
+    print("  \033[32mconnect\033[0m    - установить соединение")
+    print("  \033[31mdisconnect\033[0m - разорвать соединение")
+    print("  \033[36mstatus\033[0m     - показать статус соединения")
+    print("  \033[33mexit\033[0m       - выход")
+    print("  \033[36mhelp\033[0m       - показать эту справку")
+    print("\033[1mЧтобы отправить сообщение, просто введите текст.\033[0m\n")
+
+def check_for_response(ser, connection):
+    """Проверяет наличие ответа от получателя."""
+    if ser.in_waiting:
+        frame = read_frame(ser)
+        if frame:
+            if frame.frame_type == Frame.TYPE_ACK:
+                print_status_message(f"Получено подтверждение от 0x{frame.sender:02X}", "success")
+            else:
+                print_status_message(f"Получен ответ типа 0x{frame.frame_type:02X} от 0x{frame.sender:02X}", "info")
+            
+            old_state = connection.state
+            connection.handle_frame(frame)
+            
+            if old_state != connection.state:
+                if connection.state == ConnectionState.CONNECTED:
+                    print_status_message(f"Соединение с 0x{connection.remote_addr:02X} установлено!", "success")
+                elif connection.state == ConnectionState.DISCONNECTED:
+                    print_status_message(f"Соединение с 0x{connection.remote_addr:02X} закрыто", "warning")
 
 def main():
     # Проверяем аргументы командной строки
@@ -102,21 +181,68 @@ def main():
                 return
             port = ports[index] if isinstance(ports[index], str) else ports[index].device
 
-    ser = serial.Serial(port, baudrate=9600, timeout=1)
+    ser = serial.Serial(port, baudrate=9600, timeout=0.1)  # Уменьшаем таймаут для быстрой проверки
     print(f"Подключено к {port}")
+    
+    connection = Connection(MY_ADDR, RECV_ADDR)
+    print_help()
     
     try:
         while True:
-            message = safe_input("Введите сообщение (или 'exit'): ")
-            if not message:  # Пропускаем пустые сообщения
-                continue
-            if message.lower() == 'exit':
-                break
+            # Проверяем таймауты
+            retry_frame = connection.check_timeout()
+            if retry_frame:
+                print_status_message("Повторная отправка...", "warning")
+                send_frame(ser, retry_frame)
             
-            print(f"Отправка [{MY_ADDR:02X} → {RECV_ADDR:02X}]: {message}")
-            send_frame(ser, message)
+            # Проверяем ответы
+            check_for_response(ser, connection)
+            
+            # Проверяем ввод пользователя
+            if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+                command = safe_input(f"{get_status_prompt(connection)}> ").strip()
+                if not command:
+                    continue
+                    
+                if command.lower() == 'exit':
+                    if connection.state == ConnectionState.CONNECTED:
+                        print_status_message("Разрываем соединение перед выходом...", "warning")
+                        send_frame(ser, connection.disconnect())
+                    break
+                    
+                elif command.lower() == 'help':
+                    print_help()
+                    
+                elif command.lower() == 'status':
+                    print("\n" + str(connection))
+                    
+                elif command.lower() == 'connect':
+                    try:
+                        frame = connection.connect()
+                        print_status_message(f"Отправка запроса на соединение с 0x{connection.remote_addr:02X}...", "info")
+                        send_frame(ser, frame)
+                    except ValueError as e:
+                        print_status_message(f"Ошибка: {e}", "error")
+                        
+                elif command.lower() == 'disconnect':
+                    try:
+                        frame = connection.disconnect()
+                        print_status_message(f"Отправка запроса на разрыв соединения с 0x{connection.remote_addr:02X}...", "warning")
+                        send_frame(ser, frame)
+                    except ValueError as e:
+                        print_status_message(f"Ошибка: {e}", "error")
+                        
+                else:
+                    if not connection.is_connected():
+                        print_status_message("Ошибка: нет активного соединения", "error")
+                        continue
+                        
+                    frame = connection.create_frame(Frame.TYPE_I, command.encode('utf-8'))
+                    print_status_message(f"Отправка [0x{frame.sender:02X} → 0x{frame.receiver:02X}]: {command}", "info")
+                    send_frame(ser, frame)
+                    
     except KeyboardInterrupt:
-        print("\nЗавершение работы...")
+        print_status_message("\nЗавершение работы...", "warning")
     finally:
         ser.close()
 

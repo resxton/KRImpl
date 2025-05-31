@@ -3,8 +3,10 @@ import glob
 import serial
 import serial.tools.list_ports
 import sys
-from hamming import decode_7bit
+import time
+from hamming import decode_7bit, encode_4bit
 from frame import Frame
+from connection import Connection, ConnectionState
 
 MY_ADDR = 0x01  # Адрес приёмника
 
@@ -45,20 +47,37 @@ def read_frame(ser) -> Frame:
                 print(f"Ошибка при разборе фрейма: {e}")
                 buffer.clear()
 
+def encode_and_send_byte(ser, byte: int):
+    """Кодирует и отправляет один байт."""
+    upper_nibble = (byte >> 4) & 0x0F
+    lower_nibble = byte & 0x0F
+    
+    encoded_upper = encode_4bit(upper_nibble)
+    encoded_lower = encode_4bit(lower_nibble)
+    
+    ser.write(bytes([0xFF, encoded_upper, 0xFF]))
+    ser.write(bytes([0xFF, encoded_lower, 0xFF]))
+    time.sleep(0.01)
+
+def send_frame(ser, frame: Frame):
+    """Отправляет фрейм."""
+    for byte in frame.to_bytes():
+        encode_and_send_byte(ser, byte)
+
 def print_frame_details(frame: Frame):
     """Выводит подробную информацию о фрейме."""
     print("\n=== Получен новый фрейм ===")
-    print(f"Адрес отправителя: 0x{frame.sender:02X}")
-    print(f"Адрес получателя: 0x{frame.receiver:02X}")
-    print(f"Тип фрейма: 0x{frame.frame_type:02X} ({get_frame_type_name(frame.frame_type)})")
-    print(f"Длина данных: {len(frame.data)} байт")
-    print("Содержимое фрейма (hex):", ' '.join([f'{b:02X}' for b in frame.to_bytes()]))
-    if frame.frame_type == Frame.TYPE_I:
-        try:
-            text = frame.data.decode('utf-8')
-            print(f"Декодированное сообщение: {text}")
-        except UnicodeDecodeError:
-            print("Ошибка декодирования UTF-8")
+    # print(f"Адрес отправителя: 0x{frame.sender:02X}")
+    # print(f"Адрес получателя: 0x{frame.receiver:02X}")
+    print(f"Тип фрейма: 0x{frame.frame_type:02X}")
+    # print(f"Длина данных: {len(frame.data)} байт")
+    # print("Содержимое фрейма (hex):", ' '.join([f'{b:02X}' for b in frame.to_bytes()]))
+    # if frame.frame_type == Frame.TYPE_I:
+    #     try:
+    #         text = frame.data.decode('utf-8')
+    #         print(f"Декодированное сообщение: {text}")
+    #     except UnicodeDecodeError:
+    #         print("Ошибка декодирования UTF-8")
     print("=" * 30)
 
 def get_frame_type_name(frame_type: int) -> str:
@@ -117,18 +136,41 @@ def main():
 
     ser = serial.Serial(port, baudrate=9600, timeout=1)
     print(f"Ожидание данных на {port}...")
+    
+    # Словарь соединений по адресам отправителей
+    connections = {}
 
     try:
         while True:
             frame = read_frame(ser)
             if frame:
                 print_frame_details(frame)
-                if frame.receiver == MY_ADDR or frame.receiver == Frame.BROADCAST_ADDR:
-                    if frame.frame_type == Frame.TYPE_I:
+                
+                # Проверяем, что фрейм предназначен нам
+                if frame.receiver != MY_ADDR and frame.receiver != Frame.BROADCAST_ADDR:
+                    continue
+                
+                # Получаем или создаем объект соединения
+                if frame.sender not in connections:
+                    connections[frame.sender] = Connection(MY_ADDR, frame.sender)
+                
+                connection = connections[frame.sender]
+                print(f"Состояние соединения: {connection.state.value}")
+                
+                # Обрабатываем фрейм и получаем ответ если нужен
+                response = connection.handle_frame(frame)
+                if response:
+                    print(f"Отправка ответа типа 0x{response.frame_type:02X}")
+                    send_frame(ser, response)
+                
+                # Выводим сообщение если это информационный фрейм
+                if frame.frame_type == Frame.TYPE_I and connection.is_connected():
+                    try:
                         text = frame.data.decode('utf-8')
                         print(f"[{frame.sender:02X} → {frame.receiver:02X}] {text}")
-                    else:
-                        print(f"[{frame.sender:02X} → {frame.receiver:02X}] Неизвестный тип кадра: {frame.frame_type:02X}")
+                    except UnicodeDecodeError:
+                        print(f"[{frame.sender:02X} → {frame.receiver:02X}] Ошибка декодирования сообщения")
+                
     except KeyboardInterrupt:
         print("\nЗавершение работы...")
     finally:
