@@ -10,6 +10,15 @@ class Frame:
     TYPE_ACK = 0x04    # Подтверждение
     TYPE_RET = 0x05    # Запрос повтора
 
+    # Описания типов фреймов
+    FRAME_TYPES = {
+        TYPE_I: "Информационный",
+        TYPE_LINK: "Установка соединения",
+        TYPE_UPLINK: "Разрыв соединения",
+        TYPE_ACK: "Подтверждение",
+        TYPE_RET: "Запрос повтора"
+    }
+
     def __init__(self, receiver: int, sender: int, frame_type: int, data: bytes = b''):
         self.receiver = receiver
         self.sender = sender

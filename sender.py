@@ -10,9 +10,9 @@ from frame import Frame
 from connection import Connection, ConnectionState
 import select
 import random
+from config import SerialConfig, configure_port, print_serial_config
 
-MY_ADDR = random.randint(0x10, 0x7E)  # Случайный адрес отправителя
-RECV_ADDR = 0x01  # Адрес получателя
+MY_ADDR = random.randint(0x40, 0x7E)  # Случайный адрес отправителя (верхняя половина диапазона)
 
 def safe_input(prompt: str) -> str:
     """Безопасный ввод с поддержкой UTF-8 и редактирования."""
@@ -159,6 +159,7 @@ def print_help():
     print("  \033[32mconnect\033[0m    - установить соединение")
     print("  \033[31mdisconnect\033[0m - разорвать соединение")
     print("  \033[36mstatus\033[0m     - показать статус соединения")
+    print("  \033[36mconfig\033[0m     - настроить параметры порта")
     print("  \033[33mexit\033[0m       - выход")
     print("  \033[36mhelp\033[0m       - показать эту справку")
     print("\033[1mЧтобы отправить сообщение, просто введите текст.\033[0m\n")
@@ -228,7 +229,15 @@ def main():
     if not nickname:
         nickname = f"0x{MY_ADDR:02X}"
     
-    ser = serial.Serial(port, baudrate=9600, timeout=0.1)
+    # Загружаем или создаем конфигурацию порта
+    config = SerialConfig.load()
+    if not config:
+        config = configure_port()
+        if not config:
+            return
+    
+    print_serial_config(config)
+    ser = serial.Serial(port, **config.to_dict())
     print(f"Подключено к {port}")
     print(f"Ваш адрес: \033[1;33m0x{MY_ADDR:02X}\033[0m")
     print(f"Ваш никнейм: \033[1;36m{nickname}\033[0m")
@@ -240,8 +249,9 @@ def main():
         while True:
             # Проверяем таймауты если есть активное соединение
             if connection:
-                # Проверяем таймауты и попытки подключения
-                if check_connection_timeout(ser, connection):
+                # Проверяем таймаут соединения
+                if connection.is_connection_timeout():
+                    print_status_message(f"Соединение с {connection.remote_nick} разорвано по таймауту", "warning")
                     connection = None
                     continue
                 
@@ -252,20 +262,23 @@ def main():
             # Проверяем ввод пользователя
             if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
                 prompt = get_status_prompt(connection) if connection else "\033[1;37m[READY]\033[0m"
-                command = safe_input(f"{prompt}> ").strip()
-                if not command:
+                user_input = safe_input(f"{prompt}> ").strip()
+                if not user_input:
                     continue
+                
+                # Команду приводим к нижнему регистру для проверки
+                command = user_input.lower()
                     
-                if command.lower() == 'exit':
+                if command == 'exit':
                     if connection and connection.state == ConnectionState.CONNECTED:
                         print_status_message("Разрываем соединение перед выходом...", "warning")
                         send_frame(ser, connection.disconnect())
                     break
                     
-                elif command.lower() == 'help':
+                elif command == 'help':
                     print_help()
                     
-                elif command.lower() == 'status':
+                elif command == 'status':
                     if connection:
                         print("\n" + str(connection))
                         if connection.state == ConnectionState.CONNECTING:
@@ -273,7 +286,24 @@ def main():
                     else:
                         print_status_message(f"Нет активного соединения. Ваш адрес: 0x{MY_ADDR:02X}", "info")
                     
-                elif command.lower().startswith('connect'):
+                elif command == 'config':
+                    # Сохраняем текущие настройки
+                    old_config = config
+                    
+                    # Настраиваем новые параметры
+                    new_config = configure_port()
+                    if new_config:
+                        # Если конфигурация изменилась
+                        if new_config != old_config:
+                            # Сохраняем новую конфигурацию
+                            new_config.save()
+                            config = new_config
+                            print_status_message("Конфигурация сохранена", "success")
+                            print_status_message("Для применения новых настроек перезапустите программу", "warning")
+                        else:
+                            print_status_message("Конфигурация не изменилась", "info")
+                    
+                elif command.startswith('connect'):
                     if connection:
                         print_status_message("Уже есть активное соединение", "error")
                         continue
@@ -298,7 +328,7 @@ def main():
                         print_status_message(f"Ошибка: {e}", "error")
                         connection = None
                         
-                elif command.lower() == 'disconnect':
+                elif command == 'disconnect':
                     if not connection:
                         print_status_message("Нет активного соединения", "error")
                         continue
@@ -319,10 +349,11 @@ def main():
                         print_status_message("Ошибка: соединение не установлено", "error")
                         continue
                         
-                    frame = connection.create_frame(Frame.TYPE_I, command.encode('utf-8'))
-                    print_status_message(f"Отправка [0x{frame.sender:02X} → 0x{frame.receiver:02X}]: {command}", "info")
+                    # Используем оригинальный текст user_input для отправки сообщения
+                    frame = connection.create_frame(Frame.TYPE_I, user_input.encode('utf-8'))
+                    print_status_message(f"Отправка [0x{frame.sender:02X} → 0x{frame.receiver:02X}]: {user_input}", "info")
                     send_frame(ser, frame)
-                    
+            
     except KeyboardInterrupt:
         print_status_message("\nЗавершение работы...", "warning")
     finally:

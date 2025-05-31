@@ -18,7 +18,7 @@ class Connection:
         self.last_activity = None
         self.retry_count = 0
         self.max_retries = 3
-        self.timeout = 5.0  # таймаут в секундах
+        self.timeout = 30.0  # таймаут в секундах
     
     def create_frame(self, frame_type: int, data: bytes = b'') -> Frame:
         """Создает фрейм с учетом адресов отправителя и получателя."""
@@ -118,6 +118,12 @@ class Connection:
                 return self.create_frame(Frame.TYPE_UPLINK)
                 
         return None
+    
+    def is_connection_timeout(self) -> bool:
+        """Проверяет, истек ли таймаут соединения."""
+        if self.last_activity is None or self.state != ConnectionState.CONNECTED:
+            return False
+        return time.time() - self.last_activity > self.timeout
     
     def is_connected(self) -> bool:
         """Проверяет, установлено ли соединение."""
