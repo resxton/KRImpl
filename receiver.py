@@ -18,7 +18,7 @@ def read_byte(ser) -> int:
         if byte == b'\xFF':  # Старт кадра
             encoded = ser.read(1)
             stop_byte = ser.read(1)
-            if not encoded or stop_byte != b'\xFE':
+            if not encoded or stop_byte != b'\xFF':
                 continue  # Пропускаем ошибочные кадры
             decoded = decode_7bit(encoded[0])
             data.append(decoded)
@@ -44,6 +44,33 @@ def read_frame(ser) -> Frame:
             except Exception as e:
                 print(f"Ошибка при разборе фрейма: {e}")
                 buffer.clear()
+
+def print_frame_details(frame: Frame):
+    """Выводит подробную информацию о фрейме."""
+    print("\n=== Получен новый фрейм ===")
+    print(f"Адрес отправителя: 0x{frame.sender:02X}")
+    print(f"Адрес получателя: 0x{frame.receiver:02X}")
+    print(f"Тип фрейма: 0x{frame.frame_type:02X} ({get_frame_type_name(frame.frame_type)})")
+    print(f"Длина данных: {len(frame.data)} байт")
+    print("Содержимое фрейма (hex):", ' '.join([f'{b:02X}' for b in frame.to_bytes()]))
+    if frame.frame_type == Frame.TYPE_I:
+        try:
+            text = frame.data.decode('utf-8')
+            print(f"Декодированное сообщение: {text}")
+        except UnicodeDecodeError:
+            print("Ошибка декодирования UTF-8")
+    print("=" * 30)
+
+def get_frame_type_name(frame_type: int) -> str:
+    """Возвращает текстовое описание типа фрейма."""
+    types = {
+        Frame.TYPE_I: "Информационный кадр",
+        Frame.TYPE_LINK: "Установка соединения",
+        Frame.TYPE_UPLINK: "Разрыв соединения",
+        Frame.TYPE_ACK: "Подтверждение",
+        Frame.TYPE_RET: "Запрос повтора"
+    }
+    return types.get(frame_type, "Неизвестный тип")
 
 def list_serial_ports():
     """Возвращает список доступных COM-портов, включая виртуальные от socat."""
@@ -95,6 +122,7 @@ def main():
         while True:
             frame = read_frame(ser)
             if frame:
+                print_frame_details(frame)
                 if frame.receiver == MY_ADDR or frame.receiver == Frame.BROADCAST_ADDR:
                     if frame.frame_type == Frame.TYPE_I:
                         text = frame.data.decode('utf-8')

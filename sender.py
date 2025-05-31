@@ -37,12 +37,14 @@ def encode_and_send_byte(ser, byte: int):
     encoded_upper = encode_4bit(upper_nibble)
     encoded_lower = encode_4bit(lower_nibble)
     
-    ser.write(bytes([0xFF, encoded_upper, 0xFE]))
-    ser.write(bytes([0xFF, encoded_lower, 0xFE]))
+    # Отправляем каждую половину байта с маркерами
+    ser.write(bytes([0xFF, encoded_upper, 0xFF]))
+    ser.write(bytes([0xFF, encoded_lower, 0xFF]))
     time.sleep(0.01)
 
 def send_frame(ser, message: str):
     """Создает и отправляет информационный фрейм."""
+    # Создаем фрейм
     frame = Frame(
         receiver=RECV_ADDR,
         sender=MY_ADDR,
@@ -50,8 +52,11 @@ def send_frame(ser, message: str):
         data=message.encode('utf-8')
     )
     
+    # Преобразуем фрейм в байты
+    frame_bytes = frame.to_bytes()
+    
     # Отправляем каждый байт фрейма
-    for byte in frame.to_bytes():
+    for byte in frame_bytes:
         encode_and_send_byte(ser, byte)
 
 def list_serial_ports():
