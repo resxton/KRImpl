@@ -169,18 +169,23 @@ def check_for_response(ser, connection):
         frame = read_frame(ser)
         if frame:
             if frame.frame_type == Frame.TYPE_ACK:
-                print_status_message(f"Получено подтверждение от 0x{frame.sender:02X}", "success")
+                if connection.state == ConnectionState.CONNECTING:
+                    print_status_message(f"Получено подтверждение установки соединения от {connection.remote_nick}", "success")
+                elif connection.state == ConnectionState.DISCONNECTING:
+                    print_status_message(f"Получено подтверждение разрыва соединения от {connection.remote_nick}", "success")
+                else:
+                    print_status_message(f"Сообщение доставлено {connection.remote_nick}", "success")
             else:
-                print_status_message(f"Получен ответ типа 0x{frame.frame_type:02X} от 0x{frame.sender:02X}", "info")
+                print_status_message(f"Получен ответ типа 0x{frame.frame_type:02X} от {connection.remote_nick}", "info")
             
             old_state = connection.state
             connection.handle_frame(frame)
             
             if old_state != connection.state:
                 if connection.state == ConnectionState.CONNECTED:
-                    print_status_message(f"Соединение с 0x{connection.remote_addr:02X} установлено!", "success")
+                    print_status_message(f"Соединение с {connection.remote_nick} установлено!", "success")
                 elif connection.state == ConnectionState.DISCONNECTED:
-                    print_status_message(f"Соединение с 0x{connection.remote_addr:02X} закрыто", "warning")
+                    print_status_message(f"Соединение с {connection.remote_nick} закрыто", "warning")
                     return True  # Сигнализируем, что соединение закрыто
     return False
 

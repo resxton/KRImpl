@@ -73,6 +73,10 @@ class Connection:
             elif self.state == ConnectionState.DISCONNECTING:
                 self.state = ConnectionState.DISCONNECTED
                 
+        elif frame.frame_type == Frame.TYPE_I and self.state == ConnectionState.CONNECTED:
+            # Получен информационный фрейм, отправляем подтверждение
+            return self.create_frame(Frame.TYPE_ACK)
+            
         return None
     
     def connect(self) -> Frame:
