@@ -3,17 +3,8 @@ import serial.tools.list_ports
 import time
 import os
 import glob
-
-def hamming_encode_4bit(data: int) -> int:
-    """Кодирует 4 бита в 7-битный код Хэмминга."""
-    d1 = (data >> 0) & 1
-    d2 = (data >> 1) & 1
-    d3 = (data >> 2) & 1
-    d4 = (data >> 3) & 1
-    p1 = d1 ^ d2 ^ d4
-    p2 = d1 ^ d3 ^ d4
-    p3 = d2 ^ d3 ^ d4
-    return (p1 | (p2 << 1) | (d1 << 2) | (p3 << 3) | (d2 << 4) | (d3 << 5) | (d4 << 6))
+import sys
+from hamming import encode_4bit
 
 def send_frame(ser, data: bytes):
     """Отправляет данные в формате кадра с кодированием Хэмминга."""
@@ -21,8 +12,8 @@ def send_frame(ser, data: bytes):
         upper_nibble = (byte >> 4) & 0x0F
         lower_nibble = byte & 0x0F
         
-        encoded_upper = hamming_encode_4bit(upper_nibble)
-        encoded_lower = hamming_encode_4bit(lower_nibble)
+        encoded_upper = encode_4bit(upper_nibble)
+        encoded_lower = encode_4bit(lower_nibble)
         
         ser.write(bytes([0xFF, encoded_upper, 0xFE]))
         ser.write(bytes([0xFF, encoded_lower, 0xFE]))
@@ -49,25 +40,30 @@ def list_serial_ports():
     return all_ports
 
 def main():
-    ports = list_serial_ports()
-
-    use_manual = False
-    if not ports:
-        use_manual = True
-    else:
-        answer = input("Вы хотите выбрать порт из списка? (y/n): ").lower()
-        use_manual = answer == 'n'
-
-    if use_manual:
-        port = input("Введите путь к порту вручную (например, /dev/ttys034): ")
-    else:
-        index = int(input("Выберите порт по номеру: "))
-        if index < 0 or index >= len(ports):
-            print("Неверный выбор порта.")
+    # Проверяем аргументы командной строки
+    if len(sys.argv) > 1:
+        try:
+            port_number = sys.argv[1]
+            port = f"/dev/ttys{port_number.zfill(3)}"
+            if not os.path.exists(port):
+                print(f"Порт {port} не существует")
+                return
+        except ValueError:
+            print("Некорректный номер порта")
             return
-        port = ports[index] if isinstance(ports[index], str) else ports[index].device
+    else:
+        ports = list_serial_ports()
+        if not ports:
+            port = input("Введите путь к порту вручную (например, /dev/ttys034): ")
+        else:
+            index = int(input("Выберите порт по номеру: "))
+            if index < 0 or index >= len(ports):
+                print("Неверный выбор порта.")
+                return
+            port = ports[index] if isinstance(ports[index], str) else ports[index].device
 
     ser = serial.Serial(port, baudrate=9600, timeout=1)
+    print(f"Подключено к {port}")
     
     try:
         while True:
