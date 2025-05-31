@@ -17,12 +17,13 @@ def generate_address() -> int:
         if addr != Frame.BROADCAST_ADDR:  # Исключаем широковещательный адрес
             return addr
 
-def print_address_banner(addr: int):
+def print_address_banner(addr: int, nickname: str):
     """Выводит красивый баннер с адресом узла."""
     print("\n" + "=" * 50)
     print(f"\033[1;36m{'АДРЕС УЗЛА':^50}\033[0m")
     print("=" * 50)
     print(f"\033[1;33m{'0x{:02X}'.format(addr):^50}\033[0m")
+    print(f"\033[1;36m{nickname:^50}\033[0m")
     print("=" * 50 + "\n")
     print("\033[1;37mИспользуйте этот адрес при подключении к узлу.\033[0m\n")
 
@@ -132,7 +133,13 @@ def list_serial_ports():
 def main():
     # Генерируем случайный адрес для этого узла
     MY_ADDR = generate_address()
-    print_address_banner(MY_ADDR)
+    
+    # Запрашиваем никнейм
+    nickname = input("Введите ваш никнейм (Enter для адреса по умолчанию): ").strip()
+    if not nickname:
+        nickname = f"0x{MY_ADDR:02X}"
+    
+    print_address_banner(MY_ADDR, nickname)
     
     # Проверяем аргументы командной строки
     if len(sys.argv) > 1:
@@ -159,6 +166,7 @@ def main():
     ser = serial.Serial(port, baudrate=9600, timeout=1)
     print(f"\nОжидание подключений на {port}...")
     print(f"Адрес узла: \033[1;33m0x{MY_ADDR:02X}\033[0m")
+    print(f"Никнейм: \033[1;36m{nickname}\033[0m")
     
     # Словарь соединений по адресам отправителей
     connections = {}
@@ -175,7 +183,7 @@ def main():
                 
                 # Получаем или создаем объект соединения
                 if frame.sender not in connections:
-                    connections[frame.sender] = Connection(MY_ADDR, frame.sender)
+                    connections[frame.sender] = Connection(MY_ADDR, frame.sender, local_nick=nickname)
                 
                 connection = connections[frame.sender]
                 print(f"Состояние соединения: {connection.state.value}")
@@ -190,9 +198,9 @@ def main():
                 if frame.frame_type == Frame.TYPE_I and connection.is_connected():
                     try:
                         text = frame.data.decode('utf-8')
-                        print(f"[0x{frame.sender:02X} → 0x{frame.receiver:02X}] {text}")
+                        print(f"[{connection.remote_nick} → {connection.local_nick}] {text}")
                     except UnicodeDecodeError:
-                        print(f"[0x{frame.sender:02X} → 0x{frame.receiver:02X}] Ошибка декодирования сообщения")
+                        print(f"[{connection.remote_nick} → {connection.local_nick}] Ошибка декодирования сообщения")
                 
     except KeyboardInterrupt:
         print("\nЗавершение работы...")

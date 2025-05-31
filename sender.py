@@ -134,11 +134,11 @@ def get_status_prompt(connection: Connection) -> str:
     """Возвращает красиво отформатированный статус для промпта."""
     state = connection.state
     if state == ConnectionState.CONNECTED:
-        return f"\033[32m[CONNECTED to 0x{connection.remote_addr:02X}]\033[0m"
+        return f"\033[32m[CONNECTED to {connection.remote_nick}]\033[0m"
     elif state == ConnectionState.CONNECTING:
-        return f"\033[33m[CONNECTING to 0x{connection.remote_addr:02X}...]\033[0m"
+        return f"\033[33m[CONNECTING to {connection.remote_nick}...]\033[0m"
     elif state == ConnectionState.DISCONNECTING:
-        return f"\033[33m[DISCONNECTING from 0x{connection.remote_addr:02X}...]\033[0m"
+        return f"\033[33m[DISCONNECTING from {connection.remote_nick}...]\033[0m"
     else:
         return "\033[31m[DISCONNECTED]\033[0m"
 
@@ -218,9 +218,15 @@ def main():
                 return
             port = ports[index] if isinstance(ports[index], str) else ports[index].device
 
-    ser = serial.Serial(port, baudrate=9600, timeout=0.1)  # Уменьшаем таймаут для быстрой проверки
+    # Запрашиваем никнейм
+    nickname = safe_input("Введите ваш никнейм (Enter для адреса по умолчанию): ").strip()
+    if not nickname:
+        nickname = f"0x{MY_ADDR:02X}"
+    
+    ser = serial.Serial(port, baudrate=9600, timeout=0.1)
     print(f"Подключено к {port}")
     print(f"Ваш адрес: \033[1;33m0x{MY_ADDR:02X}\033[0m")
+    print(f"Ваш никнейм: \033[1;36m{nickname}\033[0m")
     
     connection = None
     print_help()
@@ -278,7 +284,7 @@ def main():
                     if remote_addr is None:
                         continue
                         
-                    connection = Connection(MY_ADDR, remote_addr)
+                    connection = Connection(MY_ADDR, remote_addr, local_nick=nickname)
                     try:
                         frame = connection.connect()
                         print_status_message(f"Отправка запроса на соединение с 0x{connection.remote_addr:02X}...", "info")

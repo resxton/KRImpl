@@ -9,9 +9,11 @@ class ConnectionState(Enum):
     DISCONNECTING = "DISCONNECTING" # Идёт разрыв соединения
 
 class Connection:
-    def __init__(self, local_addr: int, remote_addr: int):
+    def __init__(self, local_addr: int, remote_addr: int, local_nick: str = None, remote_nick: str = None):
         self.local_addr = local_addr
         self.remote_addr = remote_addr
+        self.local_nick = local_nick or f"0x{local_addr:02X}"
+        self.remote_nick = remote_nick or f"0x{remote_addr:02X}"
         self.state = ConnectionState.DISCONNECTED
         self.last_activity = None
         self.retry_count = 0
@@ -20,6 +22,11 @@ class Connection:
     
     def create_frame(self, frame_type: int, data: bytes = b'') -> Frame:
         """Создает фрейм с учетом адресов отправителя и получателя."""
+        # Если это информационный фрейм или запрос соединения, добавляем никнейм
+        if frame_type in [Frame.TYPE_I, Frame.TYPE_LINK]:
+            # Добавляем никнейм к данным при установке соединения
+            if frame_type == Frame.TYPE_LINK:
+                data = self.local_nick.encode('utf-8')
         return Frame(
             receiver=self.remote_addr,
             sender=self.local_addr,
@@ -35,9 +42,19 @@ class Connection:
         self.last_activity = time.time()
         
         if frame.frame_type == Frame.TYPE_LINK:
-            # Получен запрос на соединение
+            # Получен запрос на соединение с никнеймом
+            try:
+                self.remote_nick = frame.data.decode('utf-8')
+            except:
+                self.remote_nick = f"0x{frame.sender:02X}"
             self.state = ConnectionState.CONNECTED
-            return self.create_frame(Frame.TYPE_ACK)
+            # Отправляем в ответе свой никнейм
+            return Frame(
+                receiver=self.remote_addr,
+                sender=self.local_addr,
+                frame_type=Frame.TYPE_ACK,
+                data=self.local_nick.encode('utf-8')
+            )
             
         elif frame.frame_type == Frame.TYPE_UPLINK:
             # Получен запрос на разрыв соединения
@@ -47,6 +64,11 @@ class Connection:
         elif frame.frame_type == Frame.TYPE_ACK:
             # Получено подтверждение
             if self.state == ConnectionState.CONNECTING:
+                # Если это ответ на TYPE_LINK, извлекаем никнейм
+                try:
+                    self.remote_nick = frame.data.decode('utf-8')
+                except:
+                    self.remote_nick = f"0x{frame.sender:02X}"
                 self.state = ConnectionState.CONNECTED
             elif self.state == ConnectionState.DISCONNECTING:
                 self.state = ConnectionState.DISCONNECTED
@@ -98,4 +120,4 @@ class Connection:
         return self.state == ConnectionState.CONNECTED
     
     def __str__(self) -> str:
-        return f"Connection {self.local_addr:02X}↔{self.remote_addr:02X} [{self.state.value}]" 
+        return f"Connection {self.local_nick}↔{self.remote_nick} [{self.state.value}]" 
