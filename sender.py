@@ -9,8 +9,9 @@ from hamming import encode_4bit, decode_7bit
 from frame import Frame
 from connection import Connection, ConnectionState
 import select
+import random
 
-MY_ADDR = 0x02  # Адрес отправителя
+MY_ADDR = random.randint(0x10, 0x7E)  # Случайный адрес отправителя
 RECV_ADDR = 0x01  # Адрес получателя
 
 def safe_input(prompt: str) -> str:
@@ -30,6 +31,29 @@ def safe_input(prompt: str) -> str:
             # Если всё ещё ошибка, возвращаем пустую строку
             print("Ошибка при вводе текста. Попробуйте ещё раз.")
             return ""
+
+def parse_address(addr_str: str) -> int | None:
+    """Парсит адрес из строки в формате 0xXX."""
+    try:
+        # Убираем пробелы и переводим в нижний регистр
+        addr_str = addr_str.strip().lower()
+        
+        # Проверяем формат 0xXX
+        if not addr_str.startswith('0x'):
+            addr_str = '0x' + addr_str
+            
+        # Преобразуем в число
+        addr = int(addr_str, 16)
+        
+        # Проверяем диапазон
+        if 0x00 <= addr <= 0x7F:
+            return addr
+        else:
+            print_status_message("Адрес должен быть в диапазоне 0x00-0x7F", "error")
+            return None
+    except ValueError:
+        print_status_message("Неверный формат адреса. Используйте формат 0xXX или XX (hex)", "error")
+        return None
 
 def encode_and_send_byte(ser, byte: int):
     """Кодирует и отправляет один байт."""
@@ -157,6 +181,19 @@ def check_for_response(ser, connection):
                     print_status_message(f"Соединение с 0x{connection.remote_addr:02X} установлено!", "success")
                 elif connection.state == ConnectionState.DISCONNECTED:
                     print_status_message(f"Соединение с 0x{connection.remote_addr:02X} закрыто", "warning")
+                    return True  # Сигнализируем, что соединение закрыто
+    return False
+
+def check_connection_timeout(ser, connection) -> bool:
+    """Проверяет таймауты соединения и возвращает True, если все попытки исчерпаны."""
+    retry_frame = connection.check_timeout()
+    if retry_frame:
+        if connection.retry_count >= connection.max_retries:
+            print_status_message(f"Узел 0x{connection.remote_addr:02X} недоступен после {connection.max_retries} попыток", "error")
+            return True
+        print_status_message(f"Повторная попытка {connection.retry_count} из {connection.max_retries}...", "warning")
+        send_frame(ser, retry_frame)
+    return False
 
 def main():
     # Проверяем аргументы командной строки
@@ -183,29 +220,33 @@ def main():
 
     ser = serial.Serial(port, baudrate=9600, timeout=0.1)  # Уменьшаем таймаут для быстрой проверки
     print(f"Подключено к {port}")
+    print(f"Ваш адрес: \033[1;33m0x{MY_ADDR:02X}\033[0m")
     
-    connection = Connection(MY_ADDR, RECV_ADDR)
+    connection = None
     print_help()
     
     try:
         while True:
-            # Проверяем таймауты
-            retry_frame = connection.check_timeout()
-            if retry_frame:
-                print_status_message("Повторная отправка...", "warning")
-                send_frame(ser, retry_frame)
-            
-            # Проверяем ответы
-            check_for_response(ser, connection)
+            # Проверяем таймауты если есть активное соединение
+            if connection:
+                # Проверяем таймауты и попытки подключения
+                if check_connection_timeout(ser, connection):
+                    connection = None
+                    continue
+                
+                # Проверяем ответы
+                if check_for_response(ser, connection):
+                    connection = None  # Обнуляем соединение если оно было закрыто
             
             # Проверяем ввод пользователя
             if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
-                command = safe_input(f"{get_status_prompt(connection)}> ").strip()
+                prompt = get_status_prompt(connection) if connection else "\033[1;37m[READY]\033[0m"
+                command = safe_input(f"{prompt}> ").strip()
                 if not command:
                     continue
                     
                 if command.lower() == 'exit':
-                    if connection.state == ConnectionState.CONNECTED:
+                    if connection and connection.state == ConnectionState.CONNECTED:
                         print_status_message("Разрываем соединение перед выходом...", "warning")
                         send_frame(ser, connection.disconnect())
                     break
@@ -214,17 +255,43 @@ def main():
                     print_help()
                     
                 elif command.lower() == 'status':
-                    print("\n" + str(connection))
+                    if connection:
+                        print("\n" + str(connection))
+                        if connection.state == ConnectionState.CONNECTING:
+                            print_status_message(f"Попытка {connection.retry_count} из {connection.max_retries}", "info")
+                    else:
+                        print_status_message(f"Нет активного соединения. Ваш адрес: 0x{MY_ADDR:02X}", "info")
                     
-                elif command.lower() == 'connect':
+                elif command.lower().startswith('connect'):
+                    if connection:
+                        print_status_message("Уже есть активное соединение", "error")
+                        continue
+                        
+                    # Парсим адрес из команды или запрашиваем его
+                    parts = command.split()
+                    if len(parts) > 1:
+                        remote_addr = parse_address(parts[1])
+                    else:
+                        addr_input = safe_input("Введите адрес узла (в формате 0xXX): ")
+                        remote_addr = parse_address(addr_input)
+                    
+                    if remote_addr is None:
+                        continue
+                        
+                    connection = Connection(MY_ADDR, remote_addr)
                     try:
                         frame = connection.connect()
                         print_status_message(f"Отправка запроса на соединение с 0x{connection.remote_addr:02X}...", "info")
                         send_frame(ser, frame)
                     except ValueError as e:
                         print_status_message(f"Ошибка: {e}", "error")
+                        connection = None
                         
                 elif command.lower() == 'disconnect':
+                    if not connection:
+                        print_status_message("Нет активного соединения", "error")
+                        continue
+                        
                     try:
                         frame = connection.disconnect()
                         print_status_message(f"Отправка запроса на разрыв соединения с 0x{connection.remote_addr:02X}...", "warning")
@@ -233,8 +300,12 @@ def main():
                         print_status_message(f"Ошибка: {e}", "error")
                         
                 else:
-                    if not connection.is_connected():
+                    if not connection:
                         print_status_message("Ошибка: нет активного соединения", "error")
+                        continue
+                        
+                    if not connection.is_connected():
+                        print_status_message("Ошибка: соединение не установлено", "error")
                         continue
                         
                     frame = connection.create_frame(Frame.TYPE_I, command.encode('utf-8'))

@@ -4,9 +4,27 @@ import serial
 import serial.tools.list_ports
 import sys
 import time
+import random
 from hamming import decode_7bit, encode_4bit
 from frame import Frame
 from connection import Connection, ConnectionState
+
+def generate_address() -> int:
+    """Генерирует случайный адрес, исключая специальные адреса."""
+    while True:
+        # Генерируем адрес от 0x10 до 0x7E
+        addr = random.randint(0x10, 0x7E)
+        if addr != Frame.BROADCAST_ADDR:  # Исключаем широковещательный адрес
+            return addr
+
+def print_address_banner(addr: int):
+    """Выводит красивый баннер с адресом узла."""
+    print("\n" + "=" * 50)
+    print(f"\033[1;36m{'АДРЕС УЗЛА':^50}\033[0m")
+    print("=" * 50)
+    print(f"\033[1;33m{'0x{:02X}'.format(addr):^50}\033[0m")
+    print("=" * 50 + "\n")
+    print("\033[1;37mИспользуйте этот адрес при подключении к узлу.\033[0m\n")
 
 MY_ADDR = 0x01  # Адрес приёмника
 
@@ -112,6 +130,10 @@ def list_serial_ports():
     return all_ports
 
 def main():
+    # Генерируем случайный адрес для этого узла
+    MY_ADDR = generate_address()
+    print_address_banner(MY_ADDR)
+    
     # Проверяем аргументы командной строки
     if len(sys.argv) > 1:
         try:
@@ -135,7 +157,8 @@ def main():
             port = ports[index] if isinstance(ports[index], str) else ports[index].device
 
     ser = serial.Serial(port, baudrate=9600, timeout=1)
-    print(f"Ожидание данных на {port}...")
+    print(f"\nОжидание подключений на {port}...")
+    print(f"Адрес узла: \033[1;33m0x{MY_ADDR:02X}\033[0m")
     
     # Словарь соединений по адресам отправителей
     connections = {}
@@ -167,9 +190,9 @@ def main():
                 if frame.frame_type == Frame.TYPE_I and connection.is_connected():
                     try:
                         text = frame.data.decode('utf-8')
-                        print(f"[{frame.sender:02X} → {frame.receiver:02X}] {text}")
+                        print(f"[0x{frame.sender:02X} → 0x{frame.receiver:02X}] {text}")
                     except UnicodeDecodeError:
-                        print(f"[{frame.sender:02X} → {frame.receiver:02X}] Ошибка декодирования сообщения")
+                        print(f"[0x{frame.sender:02X} → 0x{frame.receiver:02X}] Ошибка декодирования сообщения")
                 
     except KeyboardInterrupt:
         print("\nЗавершение работы...")
