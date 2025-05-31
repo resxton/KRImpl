@@ -4,20 +4,55 @@ import time
 import os
 import glob
 import sys
+import locale
 from hamming import encode_4bit
+from frame import Frame
 
-def send_frame(ser, data: bytes):
-    """Отправляет данные в формате кадра с кодированием Хэмминга."""
-    for byte in data:
-        upper_nibble = (byte >> 4) & 0x0F
-        lower_nibble = byte & 0x0F
-        
-        encoded_upper = encode_4bit(upper_nibble)
-        encoded_lower = encode_4bit(lower_nibble)
-        
-        ser.write(bytes([0xFF, encoded_upper, 0xFE]))
-        ser.write(bytes([0xFF, encoded_lower, 0xFE]))
-        time.sleep(0.01)
+MY_ADDR = 0x02  # Адрес отправителя
+RECV_ADDR = 0x01  # Адрес получателя
+
+def safe_input(prompt: str) -> str:
+    """Безопасный ввод с поддержкой UTF-8 и редактирования."""
+    try:
+        # Устанавливаем локаль для корректной работы с UTF-8
+        if sys.platform == 'darwin':
+            locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
+        return input(prompt).strip()
+    except UnicodeDecodeError:
+        # Если возникла ошибка декодирования, пробуем другую кодировку
+        try:
+            if sys.platform == 'darwin':
+                return input(prompt.encode('utf-8').decode(sys.stdin.encoding)).strip()
+            return input(prompt).strip()
+        except UnicodeDecodeError:
+            # Если всё ещё ошибка, возвращаем пустую строку
+            print("Ошибка при вводе текста. Попробуйте ещё раз.")
+            return ""
+
+def encode_and_send_byte(ser, byte: int):
+    """Кодирует и отправляет один байт."""
+    upper_nibble = (byte >> 4) & 0x0F
+    lower_nibble = byte & 0x0F
+    
+    encoded_upper = encode_4bit(upper_nibble)
+    encoded_lower = encode_4bit(lower_nibble)
+    
+    ser.write(bytes([0xFF, encoded_upper, 0xFE]))
+    ser.write(bytes([0xFF, encoded_lower, 0xFE]))
+    time.sleep(0.01)
+
+def send_frame(ser, message: str):
+    """Создает и отправляет информационный фрейм."""
+    frame = Frame(
+        receiver=RECV_ADDR,
+        sender=MY_ADDR,
+        frame_type=Frame.TYPE_I,
+        data=message.encode('utf-8')
+    )
+    
+    # Отправляем каждый байт фрейма
+    for byte in frame.to_bytes():
+        encode_and_send_byte(ser, byte)
 
 def list_serial_ports():
     """Возвращает список доступных COM-портов, включая виртуальные от socat."""
@@ -54,9 +89,9 @@ def main():
     else:
         ports = list_serial_ports()
         if not ports:
-            port = input("Введите путь к порту вручную (например, /dev/ttys034): ")
+            port = safe_input("Введите путь к порту вручную (например, /dev/ttys034): ")
         else:
-            index = int(input("Выберите порт по номеру: "))
+            index = int(safe_input("Выберите порт по номеру: "))
             if index < 0 or index >= len(ports):
                 print("Неверный выбор порта.")
                 return
@@ -67,12 +102,14 @@ def main():
     
     try:
         while True:
-            message = input("Введите сообщение (или 'exit'): ")
+            message = safe_input("Введите сообщение (или 'exit'): ")
+            if not message:  # Пропускаем пустые сообщения
+                continue
             if message.lower() == 'exit':
                 break
             
-            print(f"Отправка: {message}")
-            send_frame(ser, (message + '\n').encode('utf-8'))
+            print(f"Отправка [{MY_ADDR:02X} → {RECV_ADDR:02X}]: {message}")
+            send_frame(ser, message)
     except KeyboardInterrupt:
         print("\nЗавершение работы...")
     finally:

@@ -4,8 +4,11 @@ import serial
 import serial.tools.list_ports
 import sys
 from hamming import decode_7bit
+from frame import Frame
 
-def read_frame(ser) -> bytes:
+MY_ADDR = 0x01  # Адрес приёмника
+
+def read_byte(ser) -> int:
     """Читает два 7-битных кода и собирает байт."""
     data = []
     while len(data) < 2:
@@ -19,7 +22,28 @@ def read_frame(ser) -> bytes:
                 continue  # Пропускаем ошибочные кадры
             decoded = decode_7bit(encoded[0])
             data.append(decoded)
-    return bytes([(data[0] << 4) | data[1]])
+    return (data[0] << 4) | data[1]
+
+def read_frame(ser) -> Frame:
+    """Читает и собирает фрейм."""
+    buffer = bytearray()
+    while True:
+        byte = read_byte(ser)
+        if byte is None:
+            return None
+        
+        buffer.append(byte)
+        
+        # Проверяем, достаточно ли байт для заголовка фрейма
+        if len(buffer) >= 5:
+            try:
+                # Проверяем длину данных из заголовка
+                length = buffer[4]
+                if len(buffer) >= length + 6:  # заголовок + данные + стоп-байт
+                    return Frame.from_bytes(buffer)
+            except Exception as e:
+                print(f"Ошибка при разборе фрейма: {e}")
+                buffer.clear()
 
 def list_serial_ports():
     """Возвращает список доступных COM-портов, включая виртуальные от socat."""
@@ -66,19 +90,17 @@ def main():
 
     ser = serial.Serial(port, baudrate=9600, timeout=1)
     print(f"Ожидание данных на {port}...")
-    buffer = bytearray()
 
     try:
         while True:
-            byte = read_frame(ser)
-            if byte:
-                buffer += byte
-                if byte == b'\n' or byte == b'\r':
-                    try:
-                        print("Принято:", buffer.decode('utf-8').strip())
-                    except UnicodeDecodeError:
-                        print("Ошибка декодирования:", buffer.hex())
-                    buffer.clear()
+            frame = read_frame(ser)
+            if frame:
+                if frame.receiver == MY_ADDR or frame.receiver == Frame.BROADCAST_ADDR:
+                    if frame.frame_type == Frame.TYPE_I:
+                        text = frame.data.decode('utf-8')
+                        print(f"[{frame.sender:02X} → {frame.receiver:02X}] {text}")
+                    else:
+                        print(f"[{frame.sender:02X} → {frame.receiver:02X}] Неизвестный тип кадра: {frame.frame_type:02X}")
     except KeyboardInterrupt:
         print("\nЗавершение работы...")
     finally:
