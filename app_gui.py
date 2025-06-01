@@ -15,6 +15,15 @@ from connection import Connection, ConnectionState
 from config import SerialConfig, print_serial_config
 
 
+def generate_address() -> int:
+    """Генерирует случайный адрес, исключая специальные адреса."""
+    while True:
+        # Генерируем адрес от 0x02 до 0x7E, исключая широковещательный
+        addr = random.randint(0x02, 0x7E)
+        if addr != Frame.BROADCAST_ADDR:  # Исключаем широковещательный адрес
+            return addr
+
+
 # === Парсер адреса ===
 def parse_address(addr_str: str) -> int | None:
     try:
@@ -86,6 +95,9 @@ class SerialAppTabs:
         self.root.geometry("800x500")
         self.root.resizable(True, True)
 
+        # Генерируем единый адрес для всего приложения
+        self.node_addr = generate_address()
+
         # Стили
         style = ttk.Style()
         style.configure("TNotebook.Tab", font=("Helvetica", 12), padding=[10, 5])
@@ -107,8 +119,8 @@ class SerialAppTabs:
         self.notebook.add(self.config_tab, text="⚙️ Настройки")
 
         # Панели
-        self.sender_panel = GUIModulePanel(self.sender_tab, is_sender=True)
-        self.receiver_panel = GUIModulePanel(self.receiver_tab, is_sender=False)
+        self.sender_panel = GUIModulePanel(self.sender_tab, is_sender=True, node_addr=self.node_addr)
+        self.receiver_panel = GUIModulePanel(self.receiver_tab, is_sender=False, node_addr=self.node_addr)
         self.config_panel = ConfigPanel(self.config_tab)
 
     def close(self):
@@ -178,13 +190,13 @@ class ConfigPanel:
 
 # === Общий класс панели подключения ===
 class GUIModulePanel:
-    def __init__(self, parent, is_sender=True):
+    def __init__(self, parent, is_sender=True, node_addr=None):
         self.parent = parent
         self.is_sender = is_sender
         self.ser = None
         self.running = False
         self.config = SerialConfig.load()  # Загружаем конфиг
-        self.my_addr = random.randint(0x02, 0x7E)  # Единый адрес для узла
+        self.my_addr = node_addr if node_addr is not None else generate_address()  # Используем переданный адрес
         self.nickname = f"0x{self.my_addr:02X}"
         self.connection = None
         self.port_map = {}
