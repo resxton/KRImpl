@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import ttk, scrolledtext, messagebox
 import serial
 import serial.tools.list_ports
 import glob
@@ -7,12 +7,12 @@ import os
 import time
 import threading
 import random
-from enum import Enum
 
-# === Твои модули ===
+# === Импорты из проекта ===
 from frame import Frame
 from hamming import encode_4bit, decode_7bit
 from connection import Connection, ConnectionState
+from config import SerialConfig, print_serial_config
 
 
 # === Парсер адреса ===
@@ -45,23 +45,6 @@ def send_frame(ser, frame: Frame):
 
 
 # === Чтение фрейма ===
-def read_frame(ser) -> Frame:
-    buffer = bytearray()
-    while True:
-        byte = read_byte(ser)
-        if byte is None:
-            return None
-        buffer.append(byte)
-        if len(buffer) >= 5:
-            try:
-                length = buffer[4]
-                if len(buffer) >= length + 6:
-                    return Frame.from_bytes(buffer)
-            except Exception as e:
-                print(f"Ошибка при разборе фрейма: {e}")
-                buffer.clear()
-
-
 def read_byte(ser) -> int:
     data = []
     while len(data) < 2:
@@ -78,42 +61,21 @@ def read_byte(ser) -> int:
     return (data[0] << 4) | data[1]
 
 
-# === Конфигурация порта ===
-class SerialConfig:
-    def __init__(self, baudrate=9600, bytesize=8, parity='N', stopbits=1, timeout=1.0):
-        self.baudrate = baudrate
-        self.bytesize = bytesize
-        self.parity = parity
-        self.stopbits = stopbits
-        self.timeout = timeout
-
-    def to_dict(self):
-        return {
-            'baudrate': self.baudrate,
-            'bytesize': self.bytesize,
-            'parity': self.parity,
-            'stopbits': self.stopbits,
-            'timeout': self.timeout
-        }
-
-    @staticmethod
-    def load():
-        try:
-            with open("serial_config.json", "r") as f:
-                data = json.load(f)
-                return SerialConfig(**data)
-        except Exception:
-            return SerialConfig()
-
-    def save(self):
-        with open("serial_config.json", "w") as f:
-            json.dump({
-                'baudrate': self.baudrate,
-                'bytesize': self.bytesize,
-                'parity': self.parity,
-                'stopbits': self.stopbits,
-                'timeout': self.timeout
-            }, f)
+def read_frame(ser) -> Frame:
+    buffer = bytearray()
+    while True:
+        byte = read_byte(ser)
+        if byte is None:
+            return None
+        buffer.append(byte)
+        if len(buffer) >= 5:
+            try:
+                length = buffer[4]
+                if len(buffer) >= length + 6:
+                    return Frame.from_bytes(buffer)
+            except Exception as e:
+                print(f"Ошибка при разборе фрейма: {e}")
+                buffer.clear()
 
 
 # === Главное окно с вкладками ===
@@ -135,29 +97,93 @@ class SerialAppTabs:
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(pady=5, expand=True, fill="both")
 
+        # Вкладки
         self.sender_tab = ttk.Frame(self.notebook)
         self.receiver_tab = ttk.Frame(self.notebook)
+        self.config_tab = ttk.Frame(self.notebook)
 
         self.notebook.add(self.sender_tab, text="Отправитель")
         self.notebook.add(self.receiver_tab, text="Получатель")
+        self.notebook.add(self.config_tab, text="⚙️ Настройки")
 
         # Панели
         self.sender_panel = GUIModulePanel(self.sender_tab, is_sender=True)
         self.receiver_panel = GUIModulePanel(self.receiver_tab, is_sender=False)
+        self.config_panel = ConfigPanel(self.config_tab)
 
     def close(self):
         self.sender_panel.close()
         self.receiver_panel.close()
 
 
-# === Общий класс для работы с портом и GUI ===
+# === Вкладка настроек порта ===
+class ConfigPanel:
+    def __init__(self, parent):
+        self.parent = parent
+        self.config = SerialConfig.load()
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        grid_opts = {'padx': 10, 'pady': 5, 'sticky': 'ew'}
+
+        ttk.Label(self.parent, text="Скорость:", style="Header.TLabel").grid(row=0, column=0, **grid_opts)
+        self.baud_var = tk.StringVar(value=str(self.config.baudrate))
+        self.baud_combo = ttk.Combobox(self.parent, textvariable=self.baud_var, values=[
+            300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200
+        ])
+        self.baud_combo.grid(row=0, column=1, **grid_opts)
+
+        ttk.Label(self.parent, text="Четность:", style="Header.TLabel").grid(row=1, column=0, **grid_opts)
+        self.parity_var = tk.StringVar(value=self.config.parity)
+        ttk.Combobox(self.parent, textvariable=self.parity_var, values=['N', 'E', 'O']).grid(
+            row=1, column=1, **grid_opts
+        )
+
+        ttk.Label(self.parent, text="Биты данных:", style="Header.TLabel").grid(row=2, column=0, **grid_opts)
+        self.bits_var = tk.IntVar(value=self.config.bytesize)
+        ttk.Spinbox(self.parent, from_=5, to=8, textvariable=self.bits_var).grid(
+            row=2, column=1, **grid_opts
+        )
+
+        ttk.Label(self.parent, text="Стоп-биты:", style="Header.TLabel").grid(row=3, column=0, **grid_opts)
+        self.stop_var = tk.DoubleVar(value=self.config.stopbits)
+        ttk.Spinbox(self.parent, from_=1, to=2, increment=0.5, textvariable=self.stop_var).grid(
+            row=3, column=1, **grid_opts
+        )
+
+        ttk.Label(self.parent, text="Таймаут чтения:", style="Header.TLabel").grid(row=4, column=0, **grid_opts)
+        self.timeout_var = tk.DoubleVar(value=self.config.timeout)
+        ttk.Entry(self.parent, textvariable=tk.StringVar(value=str(self.config.timeout))).grid(
+            row=4, column=1, **grid_opts
+        )
+
+        ttk.Button(self.parent, text="Сохранить", command=self.save_config).grid(
+            row=5, column=0, columnspan=2, pady=10
+        )
+
+    def save_config(self):
+        try:
+            self.config.baudrate = int(self.baud_var.get())
+            self.config.parity = self.parity_var.get()
+            self.config.bytesize = self.bits_var.get()
+            self.config.stopbits = self.stop_var.get()
+            self.config.timeout = float(self.timeout_var.get())
+
+            self.config.save()
+            messagebox.showinfo("OK", "Конфигурация порта сохранена.")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Неверные данные: {e}")
+
+
+# === Общий класс панели подключения ===
 class GUIModulePanel:
     def __init__(self, parent, is_sender=True):
         self.parent = parent
         self.is_sender = is_sender
         self.ser = None
         self.running = False
-        self.config = SerialConfig.load()
+        self.config = SerialConfig.load()  # Загружаем конфиг
         self.my_addr = random.randint(0x02, 0x7E)  # Единый адрес для узла
         self.nickname = f"0x{self.my_addr:02X}"
         self.connection = None
@@ -295,49 +321,16 @@ class GUIModulePanel:
         elif cmd == 'exit':
             self.root.destroy()
 
-    def open_config_window(self):
-        config_window = tk.Toplevel(self.root)
-        config_window.title("Настройка порта")
-        config_window.geometry("300x200")
-
-        ttk.Label(config_window, text="Скорость:", style="Header.TLabel").grid(row=0, column=0, padx=10, pady=5)
-        self.baud_var = tk.StringVar(value=str(self.config.baudrate))
-        ttk.Entry(config_window, textvariable=self.baud_var).grid(row=0, column=1)
-
-        ttk.Label(config_window, text="Четность:", style="Header.TLabel").grid(row=1, column=0, padx=10, pady=5)
-        self.parity_var = tk.StringVar(value=self.config.parity)
-        ttk.Combobox(config_window, textvariable=self.parity_var, values=['N', 'E', 'O']).grid(row=1, column=1)
-
-        ttk.Label(config_window, text="Биты данных:", style="Header.TLabel").grid(row=2, column=0, padx=10, pady=5)
-        self.bits_var = tk.IntVar(value=self.config.bytesize)
-        ttk.Spinbox(config_window, from_=5, to=8, textvariable=self.bits_var).grid(row=2, column=1)
-
-        ttk.Label(config_window, text="Стоп-биты:", style="Header.TLabel").grid(row=3, column=0, padx=10, pady=5)
-        self.stop_var = tk.DoubleVar(value=self.config.stopbits)
-        ttk.Spinbox(config_window, from_=1, to=2, increment=0.5, textvariable=self.stop_var).grid(row=3, column=1)
-
-        def save_config():
-            try:
-                self.config.baudrate = int(self.baud_var.get())
-                self.config.parity = self.parity_var.get()
-                self.config.bytesize = self.bits_var.get()
-                self.config.stopbits = self.stop_var.get()
-                self.config.save()
-                messagebox.showinfo("OK", "Настройки сохранены.")
-                config_window.destroy()
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Неверные данные: {e}")
-
-        ttk.Button(config_window, text="Сохранить", command=save_config).grid(row=4, column=0, columnspan=2, pady=10)
-
     def refresh_ports(self):
         ports = list(serial.tools.list_ports.comports())
         found = {p.device for p in ports}
         additional_ports = []
+
         for pattern in ["/dev/ttys*", "/dev/pts/*"]:
             for dev in glob.glob(pattern):
                 if dev not in found and os.access(dev, os.R_OK | os.W_OK):
                     additional_ports.append(dev)
+
         all_ports = [p.device for p in ports] + additional_ports
         menu = self.port_menu['menu']
         menu.delete(0, 'end')
@@ -350,6 +343,7 @@ class GUIModulePanel:
                 return float('inf')
 
         all_ports.sort(key=extract_number)
+
         for port in all_ports:
             name = os.path.basename(port)
             num = ''.join(filter(str.isdigit, name))
