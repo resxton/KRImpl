@@ -18,7 +18,7 @@ class Connection:
         self.last_activity = None
         self.retry_count = 0
         self.max_retries = 3
-        self.timeout = 30.0  # таймаут в секундах
+        self.timeout = 300.0  # таймаут в секундах
     
     def create_frame(self, frame_type: int, data: bytes = b'') -> Frame:
         """Создает фрейм с учетом адресов отправителя и получателя."""

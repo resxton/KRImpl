@@ -97,6 +97,7 @@ class SerialAppTabs:
 
         # Генерируем единый адрес для всего приложения
         self.node_addr = generate_address()
+        self.nickname = f"0x{self.node_addr:02X}"  # Добавляем общий никнейм
 
         # Стили
         style = ttk.Style()
@@ -118,10 +119,31 @@ class SerialAppTabs:
         self.notebook.add(self.receiver_tab, text="Получатель")
         self.notebook.add(self.config_tab, text="⚙️ Настройки")
 
-        # Панели
-        self.sender_panel = GUIModulePanel(self.sender_tab, is_sender=True, node_addr=self.node_addr)
-        self.receiver_panel = GUIModulePanel(self.receiver_tab, is_sender=False, node_addr=self.node_addr)
+        # Панели с передачей callback для обновления никнейма
+        self.sender_panel = GUIModulePanel(
+            self.sender_tab, 
+            is_sender=True, 
+            node_addr=self.node_addr,
+            nickname=self.nickname,
+            on_nickname_change=self.update_nickname
+        )
+        self.receiver_panel = GUIModulePanel(
+            self.receiver_tab, 
+            is_sender=False, 
+            node_addr=self.node_addr,
+            nickname=self.nickname,
+            on_nickname_change=self.update_nickname
+        )
         self.config_panel = ConfigPanel(self.config_tab)
+
+    def update_nickname(self, new_nickname: str, source_panel):
+        """Обновляет никнейм во всех панелях."""
+        self.nickname = new_nickname
+        # Обновляем никнейм в другой панели
+        if source_panel == self.sender_panel:
+            self.receiver_panel.update_nickname(new_nickname)
+        else:
+            self.sender_panel.update_nickname(new_nickname)
 
     def close(self):
         self.sender_panel.close()
@@ -190,20 +212,27 @@ class ConfigPanel:
 
 # === Общий класс панели подключения ===
 class GUIModulePanel:
-    def __init__(self, parent, is_sender=True, node_addr=None):
+    def __init__(self, parent, is_sender=True, node_addr=None, nickname=None, on_nickname_change=None):
         self.parent = parent
         self.is_sender = is_sender
         self.ser = None
         self.running = False
-        self.config = SerialConfig.load()  # Загружаем конфиг
-        self.my_addr = node_addr if node_addr is not None else generate_address()  # Используем переданный адрес
-        self.nickname = f"0x{self.my_addr:02X}"
+        self.config = SerialConfig.load()
+        self.my_addr = node_addr if node_addr is not None else generate_address()
+        self.nickname = nickname if nickname is not None else f"0x{self.my_addr:02X}"
         self.connection = None
         self.port_map = {}
+        self.on_nickname_change = on_nickname_change
 
         # UI
         self.create_widgets()
         self.refresh_ports()
+
+    def update_nickname(self, new_nickname: str):
+        """Обновляет никнейм в интерфейсе."""
+        self.nickname = new_nickname
+        self.nick_entry.delete(0, tk.END)
+        self.nick_entry.insert(0, new_nickname)
 
     def create_widgets(self):
         grid_opts = {'padx': 10, 'pady': 3, 'sticky': 'ew'}
@@ -226,6 +255,8 @@ class GUIModulePanel:
         self.nick_entry = ttk.Entry(self.parent)
         self.nick_entry.insert(0, self.nickname)
         self.nick_entry.grid(row=2, column=1, **grid_opts)
+        # Добавляем обработчик изменения никнейма
+        self.nick_entry.bind('<KeyRelease>', self._on_nickname_changed)
 
         # === Подключение ===
         self.connect_btn = ttk.Button(self.parent, text="Подключиться", command=self.start_serial)
@@ -269,6 +300,13 @@ class GUIModulePanel:
             self.parent.grid_rowconfigure(i, weight=1)
         for i in range(3):
             self.parent.grid_columnconfigure(i, weight=1)
+
+    def _on_nickname_changed(self, event):
+        """Обработчик изменения никнейма в поле ввода."""
+        if self.on_nickname_change:
+            new_nickname = self.nick_entry.get()
+            self.nickname = new_nickname
+            self.on_nickname_change(new_nickname, self)
 
     def on_command_selected(self, event=None):
         selected = self.cmd_var.get()
