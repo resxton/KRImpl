@@ -154,10 +154,23 @@ class SerialAppTabs:
         """Цикл чтения фреймов, обрабатывает входящие сообщения и таймауты."""
         while self.running:
             try:
+                # Проверка таймаута соединения
                 if self.connection and self.connection.is_connection_timeout():
                     self.log(f"[TIMEOUT] Соединение с {self.connection.remote_nick} разорвано из-за неактивности", color="red")
                     self.connection = None
                     self.update_status_indicator("red")
+                
+                # Проверка таймаута для повторных попыток
+                if self.connection:
+                    retry_frame = self.connection.check_timeout()
+                    if retry_frame:
+                        send_frame(self.ser, retry_frame)
+                        self.log(f"[RETRY] Повторная отправка {'TYPE_LINK' if retry_frame.frame_type == Frame.TYPE_LINK else 'TYPE_UPLINK'} к 0x{self.connection.remote_addr:02X}", color="yellow")
+                    elif self.connection.state == ConnectionState.DISCONNECTED:
+                        self.log(f"[ERROR] Не удалось установить соединение с 0x{self.connection.remote_addr:02X} после {self.connection.max_retries} попыток", color="red")
+                        self.connection = None
+                        self.update_status_indicator("red")
+
                 frame = read_frame(self.ser)
                 if frame:
                     if frame.receiver != self.node_addr and frame.receiver != Frame.BROADCAST_ADDR:
@@ -345,7 +358,7 @@ class GUIModulePanel:
         if parse_address(addr_str) is None and addr_str:
             self.addr_entry.configure(foreground="red")
         else:
-            self.addr_entry.configure(foreground="black")
+            self.addr_entry.configure(foreground="green")
 
     def clear_log(self):
         """Очищает текстовое поле лога."""
