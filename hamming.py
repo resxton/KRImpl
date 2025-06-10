@@ -28,3 +28,5 @@ def decode_7bit(encoded: int) -> int:
         encoded ^= (1 << (error_pos - 1))  # Исправляем ошибку
 
     return (d1 << 0) | (d2 << 1) | (d3 << 2) | (d4 << 3) 
+
+    
